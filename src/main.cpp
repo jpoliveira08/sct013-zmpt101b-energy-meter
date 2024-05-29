@@ -50,8 +50,9 @@ struct measurements {
 */
 void IRAM_ATTR onTimer() {
   if ((sampleCount >= 0) && (sampleCount < NSAMPLES)) {
-    voltageSamples[sampleCount++] = analogRead(VOLTAGE_ADC_PIN);
-    currentSamples[sampleCount++] = analogRead(CURRENT_ADC_PIN);
+    sampleCount = sampleCount + 1;
+    voltageSamples[sampleCount] = analogRead(VOLTAGE_ADC_PIN);
+    currentSamples[sampleCount] = analogRead(CURRENT_ADC_PIN);
   }
 }
 
@@ -101,12 +102,20 @@ void setupMeasurement() {
   timerAlarmEnable(My_timer);
 }
 
+/**
+ * trigger the reading of a buffer full of samples by setting sampleCount = 0
+ * and then waiting for the ISR to fill up the buffer
+ * When the buffer is full, we will see the sampleCount will be equal to NSAMPLES
+*/
 void readAnalogSamples() {
   int waitDelay = 17 * CYCLES;
   sampleCount = 0; // triggers the ISR to start reading the samples
 
-  delay(waitDelay);
+  // This should cause the ISR to read samples for next CYCLES of 60Hz (16.67 ms per cycle)
+  delay(waitDelay); // 340 ms
 
+  // After the delay NSAMPLES sampleCount(320) == NSAMPLES (320)
+  // sampleCount increases in each interruption
   if (sampleCount != NSAMPLES) {
     Serial.print("ADC processing is not working.");
   }
