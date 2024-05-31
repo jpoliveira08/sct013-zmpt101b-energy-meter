@@ -8,12 +8,24 @@
 #define NSAMPLES (OVER_SAMPLE_RATIO * CYCLES)
 
 #define ADC_BITS 12
-#define ADC_COUNTS (1 << ADC_BITS) // 4096
+#define ADC_COUNTS (1 << ADC_BITS)
 
 #define VOLTAGE_ADC_PIN (34)
 #define CURRENT_ADC_PIN (35)
 
-#define WANTSERIAL (1)
+#define VOLTAGE_COEFFICIENT_A 330
+#define VOLTAGE_COEFFICIENT_B -8.24
+#define CURRENT_COEFFICIENT_A 11.5
+#define CURRENT_COEFFICIENT_B -0.84
+#define REAL_POWER_COEFFICIENT_A 2.56
+#define REAL_POWER_COEFFICIENT_B 5.7
+
+#define VOLTAGE_COEFFICIENT_A_LOW_CURRENT 330
+#define VOLTAGE_COEFFICIENT_B_LOW_CURRENT -8.24
+#define CURRENT_COEFFICIENT_A_LOW_CURRENT 56.7
+#define CURRENT_COEFFICIENT_B_LOW_CURRENT -4.73
+#define REAL_POWER_COEFFICIENT_A_LOW_CURRENT 2.56
+#define REAL_POWER_COEFFICIENT_B_LOW_CURRENT 5.7
 
 volatile int sampleCount = NSAMPLES;
 volatile int voltageSamples[NSAMPLES];
@@ -24,9 +36,12 @@ const uint8_t pinCurrentAdc = 35;
 
 hw_timer_t *My_timer = NULL;
 
-struct measurements {
-  float Vrms;
-  float Irms;
+struct eletricMeasurement {
+  double vrms;
+  double irms;
+  double realPower;
+  double apparentPower;
+  double powerFactor;
 };
 
 /**
@@ -123,8 +138,8 @@ void readAnalogSamples() {
   timerWrite(My_timer, 0); // disable timer, we're done with interrupts
 }
 
-struct measurements measureRms(int* voltageSamples, int* currentSamples, int nsamples) {
-  struct measurements eletricMeasurements;
+struct eletricMeasurement measureRms(int* voltageSamples, int* currentSamples, int nsamples) {
+  struct eletricMeasurement eletricMeasurements;
   int32_t sumVoltageSamples = 0;
   int32_t sumCurrentSamples = 0;
 
@@ -138,28 +153,47 @@ struct measurements measureRms(int* voltageSamples, int* currentSamples, int nsa
 
   int32_t sumVoltage = 0;
   int32_t sumCurrent = 0;
+  int32_t sumInstantaneousPower = 0;
   for (int i = 0; i < nsamples; i++) {
     int32_t y_voltage = (voltageSamples[i] - voltageMean);
     int32_t y_current = (currentSamples[i] - currentMean);
+    int32_t y_instantaneousPower = y_voltage * y_current;
   
     sumVoltage += y_voltage * y_voltage;
     sumCurrent += y_current * y_current;
+    sumInstantaneousPower += y_instantaneousPower;
   }
 
   float ym_voltage = (float) sumVoltage / (float) nsamples;
   float ym_current = (float) sumCurrent / (float) nsamples;
+  float ym_realPower = (float) sumInstantaneousPower / (float) nsamples;
 
-  float Vrms = sqrt(ym_voltage);
-  float Irms = sqrt(ym_current);
+  float Vrms = sqrt(ym_voltage) * 3.3 / 4096.0;
+  float Irms = sqrt(ym_current) * 3.3 / 4096.0;
+  float realPower = ym_realPower * 3.3 / 4096.0;
 
-  eletricMeasurements.Vrms = Vrms * 3.3 / 4096.0;
-  eletricMeasurements.Irms = Irms * 3.3 / 4096.0;
+  if (Irms < 0.09999) {
+    Vrms = (VOLTAGE_COEFFICIENT_A_LOW_CURRENT * Vrms) + VOLTAGE_COEFFICIENT_B_LOW_CURRENT;
+    Irms = (CURRENT_COEFFICIENT_A_LOW_CURRENT * Irms) + CURRENT_COEFFICIENT_B_LOW_CURRENT;
+    realPower = (REAL_POWER_COEFFICIENT_A_LOW_CURRENT * realPower) + REAL_POWER_COEFFICIENT_B_LOW_CURRENT;
+  } else {
+    Vrms = (VOLTAGE_COEFFICIENT_A * Vrms) + VOLTAGE_COEFFICIENT_B;
+    Irms = (CURRENT_COEFFICIENT_A * Irms) + CURRENT_COEFFICIENT_B;
+    realPower = (REAL_POWER_COEFFICIENT_A * realPower) + REAL_POWER_COEFFICIENT_B;
+  }
+
+  float apparentPower = Vrms * Irms;
+  eletricMeasurements.vrms = Vrms;
+  eletricMeasurements.irms = Irms;
+  eletricMeasurements.realPower = realPower;
+  eletricMeasurements.apparentPower = apparentPower;
+  eletricMeasurements.powerFactor = realPower / apparentPower;
 
   return eletricMeasurements;
 }
 
-struct measurements makeMeasurement() {
-  struct measurements eletricMeasurements;
+struct eletricMeasurement makeMeasurement() {
+  struct eletricMeasurement eletricMeasurements;
 
   readAnalogSamples();
   if (sampleCount == NSAMPLES) {
@@ -174,9 +208,20 @@ void setup() {
 
   setupMeasurement();
 
-  struct measurements teste;
+  struct eletricMeasurement eletricMeasurements;
 
-  teste = makeMeasurement();
+  eletricMeasurements = makeMeasurement();
+
+  Serial.print("Vrms: ");
+  Serial.print(eletricMeasurements.vrms, 5);
+  Serial.print(" Irms: ");
+  Serial.print(eletricMeasurements.irms, 5);
+  Serial.print(" Real Power: ");
+  Serial.print(eletricMeasurements.realPower, 5);
+  Serial.print(" Apparent Power: ");
+  Serial.print(eletricMeasurements.apparentPower, 5);
+  Serial.print(" Power factor: ");
+  Serial.println(eletricMeasurements.powerFactor, 5);
 }
 
 void loop() {
